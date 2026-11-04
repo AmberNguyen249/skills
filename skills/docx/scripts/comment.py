@@ -175,6 +175,24 @@ _COMMENT_OVERRIDES = [
 ]
 
 
+def _comments_path(unpacked_dir: Path) -> Path:
+    rels_path = unpacked_dir / "word" / "_rels" / "document.xml.rels"
+    if rels_path.exists():
+        dom = defusedxml.minidom.parseString(rels_path.read_text(encoding="utf-8"))
+        comments_rel_type = _COMMENT_RELS[0][0]
+        for rel in dom.getElementsByTagName("Relationship"):
+            if rel.getAttribute("Type") != comments_rel_type:
+                continue
+            part = opc_target(
+                rel.getAttribute("Target"),
+                "word/document.xml",
+                rel.getAttribute("TargetMode"),
+            )
+            if part is not None:
+                return unpacked_dir.joinpath(*part.split("/"))
+    return unpacked_dir / "word" / "comments.xml"
+
+
 def _ensure_comment_relationships(unpacked_dir: Path) -> None:
     rels_path = unpacked_dir / "word" / "_rels" / "document.xml.rels"
     if not rels_path.exists():
@@ -182,21 +200,15 @@ def _ensure_comment_relationships(unpacked_dir: Path) -> None:
     dom = defusedxml.minidom.parseString(rels_path.read_text(encoding="utf-8"))
     root = dom.documentElement
     comment_types = {rel_type for rel_type, _ in _COMMENT_RELS}
-    existing = set()
+    existing_types = set()
     for rel in dom.getElementsByTagName("Relationship"):
         if rel.getAttribute("Type") not in comment_types:
             continue
-        part = opc_target(
-            rel.getAttribute("Target"),
-            "word/document.xml",
-            rel.getAttribute("TargetMode"),
-        )
-        if part is not None:
-            existing.add(part)
+        existing_types.add(rel.getAttribute("Type"))
     next_rid = _get_next_rid(rels_path)
     changed = False
     for rel_type, target in _COMMENT_RELS:
-        if opc_target(target, "word/document.xml") in existing:
+        if rel_type in existing_types:
             continue
         rel = dom.createElement("Relationship")
         rel.setAttribute("Id", f"rId{next_rid}")
@@ -250,7 +262,7 @@ def add_comment(
     if not word.exists():
         raise FileNotFoundError(f"{word} not found (not an unpacked .docx?)")
 
-    comments = word / "comments.xml"
+    comments = _comments_path(unpacked_dir)
     if comment_id is None:
         comment_id = _next_comment_id(comments)
 
